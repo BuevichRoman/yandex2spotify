@@ -1,9 +1,22 @@
 .DS_Store
 venv/
+.venv/
 
 .idea
 *.iml
 
+__pycache__/
 *.pyc
 
+# spotipy token cache
 .cache*
+
+# progress journals, run logs, downloaded playlist covers
+*.jsonl
+*.log
+*-cover
+
+# per-client working dirs and internal materials (guides, listings, client docs)
+clients/
+docs/
+~$*
