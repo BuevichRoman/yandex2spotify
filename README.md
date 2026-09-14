@@ -1,5 +1,7 @@
 # yandex2spotify
 
+> Русский гайд со всеми шагами: [GUIDE.md](GUIDE.md)
+
 Moves your whole Yandex Music library to Spotify: liked tracks (in the original order), playlists with covers, liked albums and followed artists.
 
 A reworked fork of [MarshalX/yandex2spotify](https://github.com/MarshalX/yandex2spotify). What's different:
