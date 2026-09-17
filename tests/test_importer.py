@@ -36,7 +36,7 @@ class FakeSpotify:
             raise self.save_errors.pop(0)
         self.saved.append(list(tracks))
 
-    def user_playlist_create(self, user, name):
+    def current_user_playlist_create(self, name):
         self.created_playlists.append(name)
         return {'id': f'pl-{len(self.created_playlists)}'}
 

@@ -392,7 +392,7 @@ class Importer:
             if spotify_playlist_id:
                 logger.info(f'Reusing already created playlist {playlist.title}')
             else:
-                spotify_playlist = handle_spotify_exception(self.spotify_client.user_playlist_create)(self.user, playlist.title)
+                spotify_playlist = handle_spotify_exception(self.spotify_client.current_user_playlist_create)(playlist.title)
                 spotify_playlist_id = spotify_playlist['id']
                 self.progress.set_playlist(playlist.kind, spotify_playlist_id)
 
@@ -491,7 +491,7 @@ class Importer:
 
         # Create a new playlist
         playlist_name = 'Imported from JSON'
-        playlist = handle_spotify_exception(self.spotify_client.user_playlist_create)(self.user, playlist_name)
+        playlist = handle_spotify_exception(self.spotify_client.current_user_playlist_create)(playlist_name)
 
         # Add tracks to the new playlist
         for chunk in chunks(spotify_tracks, min(self.chunk_size, MAX_IDS_PLAYLIST_ADD)):
