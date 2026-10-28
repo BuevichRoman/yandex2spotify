@@ -10,7 +10,7 @@ from PIL import Image
 from spotipy.exceptions import SpotifyException
 from yandex_music import Album, Artist, Track
 
-from importer import Importer, NotFoundException, Progress, build_parser, pick_match
+from importer import Importer, NotFoundException, Progress, build_parser, cache_writable, pick_match
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -408,6 +408,29 @@ class PickMatchPassthroughTest(unittest.TestCase):
     def test_artist_takes_first_result(self):
         found = [{'id': 'first', 'name': 'Whatever'}]
         self.assertEqual(pick_match(Artist(id=1, name='Земфира'), found), 'first')
+
+
+class CacheWritableTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+
+    def test_writable_dir_leaves_no_file(self):
+        path = os.path.join(self.tmp.name, '.cache-ivan')
+        self.assertTrue(cache_writable(path))
+        self.assertFalse(os.path.exists(path))
+
+    def test_existing_cache_is_kept(self):
+        path = os.path.join(self.tmp.name, '.cache-ivan')
+        with open(path, 'w') as f:
+            f.write('{"token": 1}')
+        self.assertTrue(cache_writable(path))
+        with open(path) as f:
+            self.assertEqual(f.read(), '{"token": 1}')
+
+    def test_username_with_slashes_is_not_writable(self):
+        # частая ошибка: в -u вставили ссылку на профиль
+        self.assertFalse(cache_writable(os.path.join(self.tmp.name, '.cache-https://open.spotify.com/user/x')))
 
 
 if __name__ == '__main__':

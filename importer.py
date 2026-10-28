@@ -155,6 +155,19 @@ def chunks(lst, n):
         yield lst[i:i + n]
 
 
+def cache_writable(path):
+    """spotipy при ошибке записи кэша токена пишет только warning, и авторизация идёт по кругу — проверяем заранее."""
+    existed = os.path.exists(path)
+    try:
+        with open(path, 'a'):
+            pass
+        if not existed:
+            os.remove(path)
+    except OSError:
+        return False
+    return True
+
+
 def encode_file_base64_jpeg(filename):
     img = Image.open(filename)
     if img.format != 'JPEG':
@@ -554,6 +567,13 @@ if __name__ == '__main__':
 
     if not 1 <= arguments.chunk <= MAX_IDS_PLAYLIST_ADD:
         raise ValueError(f'The -c/--chunk argument must be between 1 and {MAX_IDS_PLAYLIST_ADD}.')
+
+    cache_path = f'.cache-{arguments.spotify}'
+    if not cache_writable(cache_path):
+        logger.error(f'Не могу создать файл авторизации Spotify: {os.path.abspath(cache_path)}')
+        logger.error('Запустите скрипт из папки, куда можно писать (cd в папку со скриптом),')
+        logger.error('и укажите после -u простое слово латиницей, например: -u ivan')
+        sys.exit(1)
 
     try:
         auth_manager = SpotifyOAuth(
