@@ -14,6 +14,8 @@ from requests.exceptions import ReadTimeout
 from spotipy.exceptions import SpotifyException
 from spotipy.oauth2 import SpotifyOAuth
 from yandex_music import Client, Album, Artist
+from yandex_music.exceptions import BadRequestError, NetworkError, NotFoundError
+from yandex_music.utils.request import Request
 
 REDIRECT_URI = 'https://open.spotify.com'
 MAX_REQUEST_RETRIES = 5
@@ -37,6 +39,37 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+
+class SpotifyClient(spotipy.Spotify):
+    def playlist_add_items(self, playlist_id, items, position=None):
+        # Spotipy 2.26 sends a bare array to /items; Spotify requires {"uris": [...]}.
+        playlist_id = self._get_id('playlist', playlist_id)
+        data = {'uris': [self._get_uri('track', item) for item in items]}
+        if position is not None:
+            data['position'] = position
+        return self._post(f'playlists/{playlist_id}/items', payload=data)
+
+
+class YandexRequest(Request):
+    def _request_wrapper(self, *args, **kwargs):
+        for attempt in range(MAX_REQUEST_RETRIES + 1):
+            try:
+                return super()._request_wrapper(*args, **kwargs)
+            except (BadRequestError, NotFoundError):
+                raise
+            except NetworkError:
+                # TimedOutError is also a NetworkError. Retry only the failed request,
+                # so already confirmed Spotify writes and their journal remain intact.
+                if attempt == MAX_REQUEST_RETRIES:
+                    raise
+                delay = min(2 ** attempt, 16)
+                logger.warning(f'Yandex request failed. Retry {attempt + 1}/{MAX_REQUEST_RETRIES} in {delay} s...')
+                sleep(delay)
+
+
+def create_yandex_client(token):
+    return Client(token, request=YandexRequest(timeout=15)).init()
 
 
 class Progress:
@@ -433,9 +466,8 @@ class Importer:
 
             def save_tracks_callback(importer, spotify_tracks):
                 logger.info(f'Saving {len(spotify_tracks)} tracks in playlist {playlist.title}...')
-                handle_spotify_exception(importer.spotify_client.user_playlist_add_tracks)(importer.user,
-                                                                                           spotify_playlist_id,
-                                                                                           spotify_tracks)
+                handle_spotify_exception(importer.spotify_client.playlist_add_items)(spotify_playlist_id,
+                                                                                      spotify_tracks)
                 logger.info('OK')
 
             self._add_items_to_spotify(tracks, self.not_imported[playlist.title], save_tracks_callback, key_prefix=f'pl:{playlist.kind}', max_ids=MAX_IDS_PLAYLIST_ADD)
@@ -509,7 +541,7 @@ class Importer:
         # Add tracks to the new playlist
         for chunk in chunks(spotify_tracks, min(self.chunk_size, MAX_IDS_PLAYLIST_ADD)):
             logger.info(f'Saving {len(chunk)} tracks...')
-            handle_spotify_exception(self.spotify_client.user_playlist_add_tracks)(self.user, playlist['id'], chunk)
+            handle_spotify_exception(self.spotify_client.playlist_add_items)(playlist['id'], chunk)
             logger.info('OK')
 
         logger.error('Not imported tracks:')
@@ -587,13 +619,12 @@ if __name__ == '__main__':
         if arguments.token is None and arguments.json_path is None:
             raise ValueError('Either the -t (token) or -j (json_path) argument must be specified.')
 
-        spotify_client_ = spotipy.Spotify(auth_manager=auth_manager, requests_timeout=arguments.timeout,
-                                          status_forcelist=RETRY_STATUS_FORCELIST)
+        spotify_client_ = SpotifyClient(auth_manager=auth_manager, requests_timeout=arguments.timeout,
+                                        status_forcelist=RETRY_STATUS_FORCELIST)
         yandex_client_ = None
 
         if arguments.token:
-            yandex_client_ = Client(arguments.token)
-            yandex_client_.init()
+            yandex_client_ = create_yandex_client(arguments.token)
 
         progress_ = Progress(arguments.progress)
 

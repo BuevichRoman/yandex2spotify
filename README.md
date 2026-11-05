@@ -10,6 +10,7 @@ A reworked fork of [MarshalX/yandex2spotify](https://github.com/MarshalX/yandex2
 - **Verified matching.** Instead of taking the first search result, tracks are checked by duration (±3 s) and artist name, albums by track count — karaoke versions, covers and live recordings don't sneak in. Anything that doesn't verify goes to the not-found report (which is cumulative across runs).
 - **No silent data loss.** Transient Spotify errors don't mark items as done; auth errors (401/403) abort the run instead of failing 3 000 times.
 - **Spotify request limits per endpoint** (albums 20, tracks/artists 50, playlist 100) are respected regardless of `--chunk`.
+- **Yandex network retries.** Requests use a 15-second timeout and retry network failures up to five times with pauses of 1, 2, 4, 8 and 16 seconds, including during initialization. Invalid requests, missing resources and authorization errors are not retried. If retries are exhausted, run the same command with the same progress journal after the connection recovers.
 - **Secrets from the environment**, so tokens stay out of shell history.
 - **Tests** (`unittest`, no extra dependencies).
 

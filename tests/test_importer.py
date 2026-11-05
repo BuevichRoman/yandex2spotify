@@ -45,7 +45,9 @@ class FakeSpotify:
         if self.cover_errors:
             raise self.cover_errors.pop(0)
 
-    def user_playlist_add_tracks(self, user, playlist_id, tracks):
+    def playlist_add_items(self, playlist_id, tracks):
+        if self.save_errors:
+            raise self.save_errors.pop(0)
         self.saved.append(list(tracks))
 
     def current_user_saved_albums_add(self, albums):
