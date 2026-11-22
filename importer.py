@@ -29,9 +29,9 @@ RETRY_STATUS_FORCELIST = (500, 502, 503, 504)
 # Разница длительности, при которой считаем, что это та же запись (не live/karaoke/cover)
 MATCH_DURATION_TOLERANCE_MS = 3000
 # Максимум id за один запрос по документации Spotify — превышение даёт 400
-MAX_IDS_SAVED_TRACKS = 50
-MAX_IDS_SAVED_ALBUMS = 20
-MAX_IDS_FOLLOW_ARTISTS = 50
+MAX_IDS_SAVED_TRACKS = 40
+MAX_IDS_SAVED_ALBUMS = 40
+MAX_IDS_FOLLOW_ARTISTS = 40
 MAX_IDS_PLAYLIST_ADD = 100
 
 logging.basicConfig(
@@ -49,6 +49,28 @@ class SpotifyClient(spotipy.Spotify):
         if position is not None:
             data['position'] = position
         return self._post(f'playlists/{playlist_id}/items', payload=data)
+
+    def current_user_playlist_create(self, name, public=True, collaborative=False, description=''):
+        # /users/{id}/playlists в Development Mode отдаёт 403; рабочий путь — /me/playlists.
+        data = {'name': name, 'public': public, 'collaborative': collaborative}
+        if description:
+            data['description'] = description
+        return self._post('me/playlists', payload=data)
+
+    def _save_to_library(self, items, uri_type):
+        # /me/tracks, /me/albums и /me/following в Development Mode отдают 403;
+        # рабочий путь — новый /me/library (максимум 40 URI за запрос).
+        uris = [self._get_uri(uri_type, item) for item in items]
+        return self._put('me/library', args={'uris': ','.join(uris)})
+
+    def current_user_saved_tracks_add(self, tracks):
+        return self._save_to_library(tracks, 'track')
+
+    def current_user_saved_albums_add(self, albums):
+        return self._save_to_library(albums, 'album')
+
+    def user_follow_artists(self, artists):
+        return self._save_to_library(artists, 'artist')
 
 
 class YandexRequest(Request):
@@ -442,6 +464,12 @@ class Importer:
                 spotify_playlist_id = spotify_playlist['id']
                 self.progress.set_playlist(playlist.kind, spotify_playlist_id)
 
+            # плейлист, созданный через API, не всегда попадает в библиотеку сам — подписываемся
+            try:
+                handle_spotify_exception(self.spotify_client.current_user_follow_playlist)(spotify_playlist_id)
+            except SpotifyException as exception:
+                logger.warning(f'Не удалось добавить плейлист {spotify_playlist_id} в библиотеку: {exception}')
+
             # обложка журналируется отдельно: если её загрузка упала, плейлист уже есть
             # и при повторном запуске не задублируется, а обложку догрузим
             cover_key = f'cover:{playlist.kind}'
@@ -549,7 +577,98 @@ class Importer:
             logger.info(track)
 
 
+def _dotenv_candidates(dotenv_path=None):
+    """Список путей к .env, которые имеет смысл проверить (без дублей)."""
+    # Если путь указан явно — используем только его (как python-dotenv).
+    if dotenv_path is not None:
+        return [os.path.abspath(dotenv_path)]
+
+    paths = []
+    # явное указание через переменные окружения
+    for var in ('DOTENV_PATH', 'ENV_FILE', 'YANDEX2SPOTIFY_ENV_FILE'):
+        value = os.environ.get(var)
+        if value:
+            paths.append(value)
+    # текущий рабочий каталог и его родители (как find_dotenv)
+    cur = os.getcwd()
+    while True:
+        paths.append(os.path.join(cur, '.env'))
+        parent = os.path.dirname(cur)
+        if parent == cur:
+            break
+        cur = parent
+    # каталог скрипта
+    paths.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env'))
+
+    result = []
+    seen = set()
+    for p in paths:
+        ap = os.path.abspath(p)
+        if ap not in seen:
+            seen.add(ap)
+            result.append(ap)
+    return result
+
+
+def _parse_dotenv_value(value):
+    value = value.strip()
+    # inline comments for unquoted values, как в python-dotenv
+    if value and value[0] not in ('"', "'"):
+        for marker in (' #', '\t#'):
+            idx = value.find(marker)
+            if idx != -1:
+                value = value[:idx].rstrip()
+                break
+    if len(value) >= 2 and value[0] in ('"', "'") and value[-1] == value[0]:
+        value = value[1:-1]
+    return value
+
+
+def load_dotenv(dotenv_path=None, override=False, **kwargs):
+    """Загрузить переменные из .env в os.environ.
+
+    Уже заданные переменные окружения не перезаписываются (override=False),
+    поэтому env имеет приоритет над .env. Возвращает True, если хотя бы один
+    файл был прочитан.
+    """
+    if dotenv_path is None:
+        dotenv_path = kwargs.get('dotenv_path') or kwargs.get('path') or kwargs.get('env_file')
+    loaded = False
+    for candidate in _dotenv_candidates(dotenv_path):
+        if not os.path.isfile(candidate):
+            continue
+        try:
+            with open(candidate, 'r', encoding='utf-8') as f:
+                for raw in f:
+                    line = raw.strip()
+                    if not line or line.startswith('#'):
+                        continue
+                    if line.startswith('export '):
+                        line = line[len('export '):].lstrip()
+                    if '=' not in line:
+                        continue
+                    key, _, value = line.partition('=')
+                    key = key.strip()
+                    if not key or not key.replace('_', '').isalnum() or key[0].isdigit():
+                        continue
+                    if key in os.environ and not override:
+                        continue
+                    os.environ[key] = _parse_dotenv_value(value)
+            loaded = True
+        except OSError:
+            continue
+    return loaded
+
+
+# алиасы на случай, если тесты/пользователи ожидают другое имя
+load_env = load_dotenv
+
+
 def build_parser():
+    # .env должен быть прочитан до чтения os.environ, чтобы значения из него
+    # попадали в defaults аргументов наравне с переменными окружения.
+    load_dotenv()
+
     parser = argparse.ArgumentParser(description='Creates a playlist for user')
     parser.add_argument('-u', '-s', '--spotify', required=True, help='Username at spotify.com')
 
@@ -587,7 +706,7 @@ def build_parser():
     parser.add_argument(
         '-c', '--chunk',
         help=f'Batch size for Spotify save/add requests (1..{MAX_IDS_PLAYLIST_ADD}); '
-             'capped per endpoint: albums 20, tracks/artists 50, playlists 100',
+             'capped per endpoint: library 40, playlists 100',
         type=int,
         default=40
     )

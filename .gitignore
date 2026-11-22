@@ -2,6 +2,11 @@
 venv/
 .venv/
 
+# environment / secrets
+.env
+.env.*
+!.env.example
+
 .idea
 *.iml
 

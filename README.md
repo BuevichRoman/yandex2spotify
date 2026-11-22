@@ -43,6 +43,16 @@ export YANDEX_TOKEN=...
 python3 importer.py -u <any-name>
 ```
 
+Instead of exporting variables you can put them in a `.env` file in the working directory (or next to `importer.py`):
+
+```bash
+SPOTIFY_CLIENT_ID=...
+SPOTIFY_CLIENT_SECRET=...
+YANDEX_TOKEN=...
+```
+
+Values already present in the environment take precedence over `.env`.
+
 `-u` is just the name of the Spotify token cache file. The same values can be passed as `--id`, `--secret` and `-t` instead of environment variables.
 
 On the first run a browser opens with Spotify's consent screen. After *Agree* you are redirected to `open.spotify.com/?code=…` — copy that URL right away (the web player may strip it after loading) and paste it into the terminal prompt.

@@ -45,6 +45,9 @@ class FakeSpotify:
         if self.cover_errors:
             raise self.cover_errors.pop(0)
 
+    def current_user_follow_playlist(self, playlist_id, public=True):
+        return None
+
     def playlist_add_items(self, playlist_id, tracks):
         if self.save_errors:
             raise self.save_errors.pop(0)
@@ -321,27 +324,27 @@ class PlaylistCoverResumeTest(unittest.TestCase):
 
 
 class EndpointBatchLimitTest(unittest.TestCase):
-    """Spotify: /me/albums принимает максимум 20 id, /me/tracks — 50."""
+    """Spotify: /me/library принимает максимум 40 URI за запрос."""
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
 
-    def test_albums_are_saved_in_batches_of_at_most_20(self):
-        albums = [ya_album(f'Album {i}', ['Band'], 10, id=i) for i in range(25)]
-        results = [[sp_album(f'Album {i}', ['Band'], 10, f'sp{i}')] for i in range(25)]
+    def test_albums_are_saved_in_batches_of_at_most_40(self):
+        albums = [ya_album(f'Album {i}', ['Band'], 10, id=i) for i in range(45)]
+        results = [[sp_album(f'Album {i}', ['Band'], 10, f'sp{i}')] for i in range(45)]
         spotify = FakeSpotify(results)
         importer = make_importer(spotify, self.tmp.name, chunk=40, yandex=FakeYandex(albums=albums))
         importer.import_albums()
-        self.assertEqual([len(b) for b in spotify.saved], [20, 5])
+        self.assertEqual([len(b) for b in spotify.saved], [40, 5])
 
-    def test_tracks_are_saved_in_batches_of_at_most_50(self):
-        tracks = [ya_track(f'Song {i}', ['Band'], 100_000, id=i) for i in range(60)]
-        results = [[sp_track(f'Song {i}', ['Band'], 100_000, f'sp{i}')] for i in range(60)]
+    def test_tracks_are_saved_in_batches_of_at_most_40(self):
+        tracks = [ya_track(f'Song {i}', ['Band'], 100_000, id=i) for i in range(45)]
+        results = [[sp_track(f'Song {i}', ['Band'], 100_000, f'sp{i}')] for i in range(45)]
         spotify = FakeSpotify(results)
         importer = make_importer(spotify, self.tmp.name, chunk=60, yandex=FakeYandex(tracks=tracks))
         importer.import_likes()
-        self.assertEqual([len(b) for b in spotify.saved], [50, 10])
+        self.assertEqual([len(b) for b in spotify.saved], [40, 5])
 
 
 class CliTest(unittest.TestCase):
