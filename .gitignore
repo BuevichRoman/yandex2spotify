@@ -8,6 +8,11 @@ venv/
 __pycache__/
 *.pyc
 
+# Local credentials
+.env
+.env.*
+!.env.example
+
 # spotipy token cache
 .cache*
 

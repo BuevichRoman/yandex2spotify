@@ -3,6 +3,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -53,6 +54,9 @@ class FakeSpotify:
     def current_user_saved_albums_add(self, albums):
         self.saved.append(list(albums))
 
+    def user_follow_artists(self, artists):
+        self.saved.append(list(artists))
+
     def search(self, q, type='track', **kwargs):
         self.queries.append(q)
         if self.search_error:
@@ -65,10 +69,11 @@ class FakeSpotify:
 
 
 class FakeYandex:
-    def __init__(self, tracks=(), albums=(), playlists=()):
+    def __init__(self, tracks=(), albums=(), playlists=(), artists=()):
         self._tracks = list(tracks)
         self._albums = list(albums)
         self._playlists = list(playlists)
+        self._artists = list(artists)
 
     def users_likes_tracks(self):
         return SimpleNamespace(tracks=[SimpleNamespace(id=t.id, album_id=1) for t in self._tracks])
@@ -78,6 +83,9 @@ class FakeYandex:
 
     def users_likes_albums(self):
         return [SimpleNamespace(album=a) for a in self._albums]
+
+    def users_likes_artists(self):
+        return [SimpleNamespace(artist=artist) for artist in self._artists]
 
     def users_playlists_list(self):
         return list(self._playlists)
@@ -321,31 +329,48 @@ class PlaylistCoverResumeTest(unittest.TestCase):
 
 
 class EndpointBatchLimitTest(unittest.TestCase):
-    """Spotify: /me/albums принимает максимум 20 id, /me/tracks — 50."""
+    """Spotify's /me/library accepts at most 40 URIs per request."""
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
 
-    def test_albums_are_saved_in_batches_of_at_most_20(self):
-        albums = [ya_album(f'Album {i}', ['Band'], 10, id=i) for i in range(25)]
-        results = [[sp_album(f'Album {i}', ['Band'], 10, f'sp{i}')] for i in range(25)]
+    def test_albums_are_saved_in_batches_of_at_most_40(self):
+        albums = [ya_album(f'Album {i}', ['Band'], 10, id=i) for i in range(45)]
+        results = [[sp_album(f'Album {i}', ['Band'], 10, f'sp{i}')] for i in range(45)]
         spotify = FakeSpotify(results)
-        importer = make_importer(spotify, self.tmp.name, chunk=40, yandex=FakeYandex(albums=albums))
+        importer = make_importer(spotify, self.tmp.name, chunk=60, yandex=FakeYandex(albums=albums))
         importer.import_albums()
-        self.assertEqual([len(b) for b in spotify.saved], [20, 5])
+        self.assertEqual([len(b) for b in spotify.saved], [40, 5])
 
-    def test_tracks_are_saved_in_batches_of_at_most_50(self):
+    def test_tracks_are_saved_in_batches_of_at_most_40(self):
         tracks = [ya_track(f'Song {i}', ['Band'], 100_000, id=i) for i in range(60)]
         results = [[sp_track(f'Song {i}', ['Band'], 100_000, f'sp{i}')] for i in range(60)]
         spotify = FakeSpotify(results)
         importer = make_importer(spotify, self.tmp.name, chunk=60, yandex=FakeYandex(tracks=tracks))
         importer.import_likes()
-        self.assertEqual([len(b) for b in spotify.saved], [50, 10])
+        self.assertEqual([len(b) for b in spotify.saved], [40, 20])
+
+    def test_artists_are_followed_in_batches_of_at_most_40(self):
+        artists = ya_artists([f'Artist {i}' for i in range(45)])
+        results = [[{'id': f'sp{i}'}] for i in range(45)]
+        spotify = FakeSpotify(results)
+        importer = make_importer(spotify, self.tmp.name, chunk=60, yandex=FakeYandex(artists=artists))
+        importer.import_artists()
+        self.assertEqual([len(b) for b in spotify.saved], [40, 5])
 
 
 class CliTest(unittest.TestCase):
     BASE = ['-u', 'user', '--id', 'cid', '--secret', 'sec', '-t', 'tok']
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.parent = Path(tmp.name)
+        workdir = self.parent / 'work'
+        workdir.mkdir()
+        self.addCleanup(os.chdir, os.getcwd())
+        os.chdir(workdir)
 
     def test_strict_flag_is_boolean_switch(self):
         self.assertTrue(build_parser().parse_args(self.BASE + ['-S']).strict_artists_search)
@@ -366,7 +391,29 @@ class CliTest(unittest.TestCase):
             args = build_parser().parse_args(['-u', 'user', '--secret', 'cli-secret'])
         self.assertEqual(args.secret, 'cli-secret')
 
-    def test_spotify_creds_still_required_without_env(self):
+    def test_credentials_fall_back_to_dotenv(self):
+        Path('.env').write_text(
+            '# Credentials\nSPOTIFY_CLIENT_ID = file-id\n'
+            'SPOTIFY_CLIENT_SECRET="file=secret#1"\nYANDEX_TOKEN=file-token\n',
+            encoding='utf-8-sig',
+        )
+        with patch.dict(os.environ, {}, clear=True):
+            args = build_parser().parse_args(['-u', 'user'])
+            self.assertEqual(dict(os.environ), {})
+        self.assertEqual((args.id, args.secret, args.token), ('file-id', 'file=secret#1', 'file-token'))
+
+    def test_cli_and_env_override_dotenv(self):
+        Path('.env').write_text(
+            'SPOTIFY_CLIENT_ID=file-id\nSPOTIFY_CLIENT_SECRET=file-secret\nYANDEX_TOKEN=file-token\n',
+            encoding='utf-8',
+        )
+        with patch.dict(os.environ, {'SPOTIFY_CLIENT_ID': 'env-id'}, clear=True):
+            args = build_parser().parse_args(['-u', 'user', '--secret', 'cli-secret'])
+        self.assertEqual((args.id, args.secret, args.token), ('env-id', 'cli-secret', 'file-token'))
+
+    def test_spotify_creds_still_required_with_only_parent_dotenv(self):
+        (self.parent / '.env').write_text('SPOTIFY_CLIENT_ID=parent-id\nSPOTIFY_CLIENT_SECRET=parent-secret\n',
+                                          encoding='utf-8')
         with patch.dict(os.environ, {}, clear=True), self.assertRaises(SystemExit):
             build_parser().parse_args(['-u', 'user'])
 

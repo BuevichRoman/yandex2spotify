@@ -7,6 +7,7 @@ import logging
 from base64 import b64encode
 from time import sleep
 from datetime import datetime, timedelta
+from pathlib import Path
 
 import spotipy
 from PIL import Image
@@ -28,10 +29,8 @@ MAX_RATE_LIMIT_WAIT = 300
 RETRY_STATUS_FORCELIST = (500, 502, 503, 504)
 # Разница длительности, при которой считаем, что это та же запись (не live/karaoke/cover)
 MATCH_DURATION_TOLERANCE_MS = 3000
-# Максимум id за один запрос по документации Spotify — превышение даёт 400
-MAX_IDS_SAVED_TRACKS = 50
-MAX_IDS_SAVED_ALBUMS = 20
-MAX_IDS_FOLLOW_ARTISTS = 50
+# Maximum items per Spotify request.
+MAX_IDS_LIBRARY = 40
 MAX_IDS_PLAYLIST_ADD = 100
 
 logging.basicConfig(
@@ -344,7 +343,7 @@ class Importer:
 
         return spotify_id
 
-    def _add_items_to_spotify(self, items, not_imported_section, save_items_callback, key_prefix=None, max_ids=MAX_IDS_SAVED_TRACKS):
+    def _add_items_to_spotify(self, items, not_imported_section, save_items_callback, key_prefix=None, max_ids=MAX_IDS_LIBRARY):
         buffer = []
         skipped = 0
         saved = 0
@@ -428,7 +427,7 @@ class Importer:
             handle_spotify_exception(importer.spotify_client.current_user_saved_tracks_add)(spotify_tracks)
             logger.info('OK')
 
-        self._add_items_to_spotify(tracks, self.not_imported['Likes'], save_tracks_callback, key_prefix='like', max_ids=MAX_IDS_SAVED_TRACKS)
+        self._add_items_to_spotify(tracks, self.not_imported['Likes'], save_tracks_callback, key_prefix='like')
 
     def import_playlists(self):
         playlists = self.yandex_client.users_playlists_list()
@@ -484,7 +483,7 @@ class Importer:
             handle_spotify_exception(importer.spotify_client.current_user_saved_albums_add)(spotify_albums)
             logger.info('OK')
 
-        self._add_items_to_spotify(albums, self.not_imported['Albums'], save_albums_callback, key_prefix='album', max_ids=MAX_IDS_SAVED_ALBUMS)
+        self._add_items_to_spotify(albums, self.not_imported['Albums'], save_albums_callback, key_prefix='album')
 
     def import_artists(self):
         self.not_imported['Artists'] = []
@@ -498,7 +497,7 @@ class Importer:
             handle_spotify_exception(importer.spotify_client.user_follow_artists)(spotify_artists)
             logger.info('OK')
 
-        self._add_items_to_spotify(artists, self.not_imported['Artists'], save_artists_callback, key_prefix='artist', max_ids=MAX_IDS_FOLLOW_ARTISTS)
+        self._add_items_to_spotify(artists, self.not_imported['Artists'], save_artists_callback, key_prefix='artist')
 
     def import_all(self):
         for item in self._importing_items.values():
@@ -549,23 +548,48 @@ class Importer:
             logger.info(track)
 
 
+def _read_dotenv():
+    try:
+        lines = Path('.env').read_text(encoding='utf-8-sig').splitlines()
+    except FileNotFoundError:
+        return {}
+
+    values = {}
+    for line in lines:
+        key, separator, value = line.strip().partition('=')
+        key, value = key.strip(), value.strip()
+        if not separator or not key or key.startswith('#'):
+            continue
+        if len(value) >= 2 and value[0] in ('"', "'") and value[-1] == value[0]:
+            value = value[1:-1]
+        if value:
+            values[key] = value
+    return values
+
+
 def build_parser():
     parser = argparse.ArgumentParser(description='Creates a playlist for user')
     parser.add_argument('-u', '-s', '--spotify', required=True, help='Username at spotify.com')
 
-    # секреты можно не светить в argv/истории шелла — берутся из env, если флаг не передан
-    env_id = os.environ.get('SPOTIFY_CLIENT_ID')
-    env_secret = os.environ.get('SPOTIFY_CLIENT_SECRET')
-    env_token = os.environ.get('YANDEX_TOKEN')
+    try:
+        defaults = {**_read_dotenv(), **os.environ}
+    except UnicodeDecodeError:
+        parser.error('Cannot read .env: save the file as UTF-8.')
+    except OSError as error:
+        parser.error(f'Cannot read .env: {error.strerror}')
+
+    env_id = defaults.get('SPOTIFY_CLIENT_ID')
+    env_secret = defaults.get('SPOTIFY_CLIENT_SECRET')
+    env_token = defaults.get('YANDEX_TOKEN')
 
     spotify_oauth = parser.add_argument_group('spotify_oauth')
     spotify_oauth.add_argument('--id', required=env_id is None, default=env_id,
-                               help='Client ID of your Spotify app (or env SPOTIFY_CLIENT_ID)')
+                               help='Client ID of your Spotify app (or SPOTIFY_CLIENT_ID from the environment or .env)')
     spotify_oauth.add_argument('--secret', required=env_secret is None, default=env_secret,
-                               help='Client Secret of your Spotify app (or env SPOTIFY_CLIENT_SECRET)')
+                               help='Client Secret of your Spotify app (or SPOTIFY_CLIENT_SECRET from the environment or .env)')
 
     parser.add_argument('-t', '--token', default=env_token,
-                        help='Token from music.yandex.com account (or env YANDEX_TOKEN)')
+                        help='Token from music.yandex.com account (or YANDEX_TOKEN from the environment or .env)')
 
     parser.add_argument('-i', '--ignore', nargs='+', help='Don\'t import some items',
                         choices=['likes', 'playlists', 'albums', 'artists'], default=[])
@@ -587,7 +611,7 @@ def build_parser():
     parser.add_argument(
         '-c', '--chunk',
         help=f'Batch size for Spotify save/add requests (1..{MAX_IDS_PLAYLIST_ADD}); '
-             'capped per endpoint: albums 20, tracks/artists 50, playlists 100',
+             f'capped per endpoint: library {MAX_IDS_LIBRARY}, playlists {MAX_IDS_PLAYLIST_ADD}',
         type=int,
         default=40
     )

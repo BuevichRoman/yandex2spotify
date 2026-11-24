@@ -9,9 +9,9 @@ A reworked fork of [MarshalX/yandex2spotify](https://github.com/MarshalX/yandex2
 - **Resumable.** Progress is journaled to `progress.jsonl` after every confirmed write. Spotify's daily quota for development-mode apps (~700 tracks/day) stops the run with the exact time to come back; run the same command again and it continues where it left off. Playlists are not duplicated, covers are retried if the upload failed.
 - **Verified matching.** Instead of taking the first search result, tracks are checked by duration (±3 s) and artist name, albums by track count — karaoke versions, covers and live recordings don't sneak in. Anything that doesn't verify goes to the not-found report (which is cumulative across runs).
 - **No silent data loss.** Transient Spotify errors don't mark items as done; auth errors (401/403) abort the run instead of failing 3 000 times.
-- **Spotify request limits per endpoint** (albums 20, tracks/artists 50, playlist 100) are respected regardless of `--chunk`.
+- **Spotify request limits per endpoint** (library saves and artist follows 40, playlist items 100) are respected regardless of `--chunk`.
 - **Yandex network retries.** Requests use a 15-second timeout and retry network failures up to five times with pauses of 1, 2, 4, 8 and 16 seconds, including during initialization. Invalid requests, missing resources and authorization errors are not retried. If retries are exhausted, run the same command with the same progress journal after the connection recovers.
-- **Secrets from the environment**, so tokens stay out of shell history.
+- **Credentials from `.env` or environment variables**, so you can keep tokens out of command arguments.
 - **Tests** (`unittest`, no extra dependencies).
 
 Requires Python 3.9+ and a Spotify account. Spotify requires the *owner* of a development-mode app to have Premium.
@@ -43,7 +43,9 @@ export YANDEX_TOKEN=...
 python3 importer.py -u <any-name>
 ```
 
-`-u` is just the name of the Spotify token cache file. The same values can be passed as `--id`, `--secret` and `-t` instead of environment variables.
+To use a file, copy [`.env.example`](.env.example) to `.env` in the directory where you run the importer and fill in your values. Environment variables take precedence over the file, and `--id`, `--secret` and `-t` take precedence over both.
+
+`-u` is the name of the Spotify token cache file.
 
 On the first run a browser opens with Spotify's consent screen. After *Agree* you are redirected to `open.spotify.com/?code=…` — copy that URL right away (the web player may strip it after loading) and paste it into the terminal prompt.
 
@@ -64,7 +66,7 @@ Run the same command after that time. The not-found report is printed at the end
 | `-i likes playlists albums artists` | Skip sections (any subset) |
 | `-p FILE` | Progress journal path (default `progress.jsonl`) — use one per account |
 | `--start-after "Artist - Title"` | Skip everything up to and including this item |
-| `-c N` | Batch size for save requests, 1–100 (capped per endpoint) |
+| `-c N` | Batch size for save requests, 1–100 (capped at 40 for library requests and 100 for playlist items) |
 | `-S` | Don't retry a multi-artist track with only the first artist |
 | `-T SEC` | Spotify request timeout |
 | `-j FILE` | Import from a JSON list `[{"artist": "...", "track": "..."}]` into a new playlist |
