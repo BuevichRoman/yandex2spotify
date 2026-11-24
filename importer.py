@@ -555,11 +555,21 @@ def _read_dotenv():
         return {}
 
     values = {}
-    for line in lines:
-        key, separator, value = line.strip().partition('=')
+    for raw_line in lines:
+        line = raw_line.strip()
+        if line.startswith('export '):
+            line = line[len('export '):].lstrip()
+        key, separator, value = line.partition('=')
         key, value = key.strip(), value.strip()
         if not separator or not key or key.startswith('#'):
             continue
+        # inline comments for unquoted values
+        if value and value[0] not in ('"', "'"):
+            for marker in (' #', '\t#'):
+                idx = value.find(marker)
+                if idx != -1:
+                    value = value[:idx].rstrip()
+                    break
         if len(value) >= 2 and value[0] in ('"', "'") and value[-1] == value[0]:
             value = value[1:-1]
         if value:
